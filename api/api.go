@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +22,7 @@ type API struct {
 	Cert     string
 	Key      string
 	handlers []func(http.ResponseWriter, *http.Request)
+	stream   *Stream
 	start    func(*API)
 }
 
@@ -102,6 +102,8 @@ func (a *API) AddHandler(f func(http.ResponseWriter, *http.Request)) {
 
 // Start initializes the api by setting up c3pio routes and robeaux
 func (a *API) Start() {
+	a.stream = NewStream(a)
+
 	mcpCommandRoute := "/api/commands/:command"
 	robotDeviceCommandRoute := "/api/robots/:robot/devices/:device/commands/:command"
 	robotCommandRoute := "/api/robots/:robot/commands/:command"
@@ -116,7 +118,7 @@ func (a *API) Start() {
 	a.Post(robotCommandRoute, a.executeRobotCommand)
 	a.Get("/api/robots/:robot/devices", a.robotDevices)
 	a.Get("/api/robots/:robot/devices/:device", a.robotDevice)
-	a.Get("/api/robots/:robot/devices/:device/events/:event", a.robotDeviceEvent)
+	a.router.Get("/api/robots/:robot/devices/:device/events/:event", a.stream)
 	a.Get("/api/robots/:robot/devices/:device/commands", a.robotDeviceCommands)
 	a.Get(robotDeviceCommandRoute, a.executeRobotDeviceCommand)
 	a.Post(robotDeviceCommandRoute, a.executeRobotDeviceCommand)
@@ -221,45 +223,6 @@ func (a *API) robotDevice(res http.ResponseWriter, req *http.Request) {
 		a.writeJSON(map[string]interface{}{"error": err.Error()}, res)
 	} else {
 		a.writeJSON(map[string]interface{}{"device": device}, res)
-	}
-}
-
-// robotDeviceEvent returns device event route handler.
-// Creates an event stream connection
-// and queries event data to be written when received
-func (a *API) robotDeviceEvent(res http.ResponseWriter, req *http.Request) {
-	f, _ := res.(http.Flusher)
-	c, _ := res.(http.CloseNotifier)
-
-	closer := c.CloseNotify()
-	msg := make(chan string)
-
-	res.Header().Set("Content-Type", "text/event-stream")
-	res.Header().Set("Cache-Control", "no-cache")
-	res.Header().Set("Connection", "keep-alive")
-
-	if event := a.gobot.Robot(req.URL.Query().Get(":robot")).
-		Device(req.URL.Query().Get(":device")).(gobot.Eventer).
-		Event(req.URL.Query().Get(":event")); event != nil {
-		gobot.On(event, func(data interface{}) {
-			d, _ := json.Marshal(data)
-			msg <- string(d)
-		})
-
-		for {
-			select {
-			case data := <-msg:
-				fmt.Fprintf(res, "data: %v\n\n", data)
-				f.Flush()
-			case <-closer:
-				log.Println("Closing connection")
-				return
-			}
-		}
-	} else {
-		a.writeJSON(map[string]interface{}{
-			"error": errors.New("No Event found with the name " + req.URL.Query().Get(":event")),
-		}, res)
 	}
 }
 

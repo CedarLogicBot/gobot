@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/hybridgroup/gobot"
 )
@@ -361,6 +362,49 @@ func TestRobotConnection(t *testing.T) {
 	a.ServeHTTP(response, request)
 	json.NewDecoder(response.Body).Decode(&body)
 	gobot.Assert(t, body["error"], "No Connection found with the name UnknownConnection1")
+}
+
+func TestRobotDeviceEvent(t *testing.T) {
+	a := initTestAPI()
+	server := httptest.NewServer(a)
+	defer server.Close()
+
+	eventsUrl := "/api/robots/Robot1/devices/Device1/events/"
+
+	// unknown event
+	response, _ := http.Get(server.URL + eventsUrl + "UnknownEvent")
+
+	var body map[string]interface{}
+	json.NewDecoder(response.Body).Decode(&body)
+	gobot.Assert(t, body["error"], "No Event found with the name UnknownEvent")
+
+	// known event
+	go func() {
+		http.Get(server.URL + eventsUrl + "TestEvent")
+	}()
+
+	event := a.gobot.Robot("Robot1").
+		Device("Device1").(gobot.Eventer).
+		Event("TestEvent")
+
+	go func() {
+		time.Sleep(time.Millisecond * 10)
+		gobot.Publish(event, "event-data")
+	}()
+
+	done := false
+	for !done {
+		select {
+		case data := <-a.stream.dataChan:
+			gobot.Assert(t, data, "\"event-data\"")
+			done = true
+		case <-time.After(time.Millisecond * 20):
+			t.Error("Not receiving data")
+			done = true
+		}
+	}
+
+	server.CloseClientConnections()
 }
 
 func TestAPIRouter(t *testing.T) {
