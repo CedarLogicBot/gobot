@@ -389,6 +389,8 @@ func TestRobotDeviceEvent(t *testing.T) {
 	}()
 
 	done := false
+	timer := time.NewTimer(time.Millisecond * 10)
+
 	for !done {
 		select {
 		case resp := <-respc:
@@ -396,7 +398,7 @@ func TestRobotDeviceEvent(t *testing.T) {
 			data, _ := reader.ReadString('\n')
 			gobot.Assert(t, data, "data: \"event-data\"\n")
 			done = true
-		case <-time.After(time.Millisecond * 10):
+		case <-timer.C:
 			t.Error("Not receiving data")
 			done = true
 		}
